@@ -42,9 +42,9 @@ public class MainActivity extends AppCompatActivity implements BookAdapter.OnBoo
     private BookListFragment bookListFragment;
     private BookDetailsFragment bookDetailsFragment;
     private static final String CHANNEL_ID = "book_api_channel";
-//    API
+    private FetchBooksTask currentTask = null;
 
-    private static final String GOOGLE_BOOKS_API_KEY = "AIzaSyBwLj8mGGLyWSlcxohWOwNTmxcCWoGplF8";
+    private static final String GOOGLE_BOOKS_API_KEY = "AIzaSy BwLj8mGGLyWSlcxohWOwNTmxcCWoGplF8";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -71,7 +71,6 @@ public class MainActivity extends AppCompatActivity implements BookAdapter.OnBoo
 
         createNotificationChannel();
         checkNotificationPermission();
-
         viewPager.post(() -> refreshData("Android Development"));
     }
 
@@ -89,11 +88,16 @@ public class MainActivity extends AppCompatActivity implements BookAdapter.OnBoo
 
     public void refreshData(String searchQuery) {
         if (searchQuery == null || searchQuery.trim().isEmpty()) return;
+        if (currentTask != null) {
+            currentTask.cancel(true);
+        }
+
         try {
             String encodedQuery = URLEncoder.encode(searchQuery.trim(), "UTF-8");
-//           url the api
             String url = "https://www.googleapis.com/books/v1/volumes?q=" + encodedQuery + "&key=" + GOOGLE_BOOKS_API_KEY;
-            new FetchBooksTask().execute(url);
+
+            currentTask = new FetchBooksTask();
+            currentTask.execute(url);
         } catch (Exception e) {
             Log.e("SEARCH_ERROR", "Encoding error");
         }
@@ -107,6 +111,7 @@ public class MainActivity extends AppCompatActivity implements BookAdapter.OnBoo
         }
     }
 
+    // --- بداية كلاس جلب البيانات ---
     private class FetchBooksTask extends AsyncTask<String, Void, List<Book>> {
         private String errorMsg = null;
 
@@ -124,7 +129,7 @@ public class MainActivity extends AppCompatActivity implements BookAdapter.OnBoo
                 conn = (HttpURLConnection) url.openConnection();
                 conn.setRequestMethod("GET");
                 conn.setRequestProperty("Accept", "application/json");
-                conn.setRequestProperty("User-Agent", "Mozilla/5.0");
+                conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Android)");
                 conn.setConnectTimeout(10000);
                 conn.setReadTimeout(10000);
 
@@ -155,7 +160,8 @@ public class MainActivity extends AppCompatActivity implements BookAdapter.OnBoo
                             if (authorsArray.length() > 0) authors = authorsArray.getString(0);
                         }
 
-                        String desc = volumeInfo.optString("description", "No description.");
+                        String desc = volumeInfo.optString("description", "No description available.");
+
                         String thumb = "";
                         if (volumeInfo.has("imageLinks")) {
                             thumb = volumeInfo.getJSONObject("imageLinks").optString("thumbnail", "")
@@ -165,7 +171,7 @@ public class MainActivity extends AppCompatActivity implements BookAdapter.OnBoo
                     }
                 }
             } catch (Exception e) {
-                errorMsg = "Connection Error";
+                errorMsg = "Please check internet connection";
                 return null;
             } finally {
                 if (conn != null) conn.disconnect();
@@ -175,25 +181,35 @@ public class MainActivity extends AppCompatActivity implements BookAdapter.OnBoo
 
         @Override
         protected void onPostExecute(List<Book> books) {
-            if (bookListFragment != null) {
-                bookListFragment.showLoading(false);
-                if (books != null) {
-                    bookListFragment.updateBooks(books);
-                    if (!books.isEmpty() && bookDetailsFragment != null) {
-                        bookDetailsFragment.displayBookDetails(books.get(0));
-                    }
-                    sendNotification("Success", "Books loaded.");
+            currentTask = null;
+            if (bookListFragment != null) bookListFragment.showLoading(false);
+
+            if (books != null) {
+                if (books.isEmpty()) {
+                    Toast.makeText(MainActivity.this, "No books found", Toast.LENGTH_SHORT).show();
                 } else {
-                    Toast.makeText(MainActivity.this, errorMsg, Toast.LENGTH_LONG).show();
+                    if (bookListFragment != null) bookListFragment.updateBooks(books);
+                    if (bookDetailsFragment != null) bookDetailsFragment.displayBookDetails(books.get(0));
+                    sendNotification("Update Successful", "Found " + books.size() + " books.");
+                }
+            } else {
+                if (!isCancelled()) {
+                    Toast.makeText(MainActivity.this, errorMsg != null ? errorMsg : "Fetch Failed", Toast.LENGTH_LONG).show();
                 }
             }
+        }
+
+        @Override
+        protected void onCancelled() {
+            currentTask = null;
+            if (bookListFragment != null) bookListFragment.showLoading(false);
         }
     }
 
     private void createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             NotificationChannel channel = new NotificationChannel(CHANNEL_ID, "API Updates", NotificationManager.IMPORTANCE_DEFAULT);
-            NotificationManager manager = getSystemService(NotificationManager.class);
+            NotificationManager manager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
             if (manager != null) manager.createNotificationChannel(channel);
         }
     }
@@ -208,7 +224,6 @@ public class MainActivity extends AppCompatActivity implements BookAdapter.OnBoo
 
         NotificationManager manager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
         if (manager != null) {
-
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
                     ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) {
                 manager.notify(1, builder.build());
@@ -218,18 +233,21 @@ public class MainActivity extends AppCompatActivity implements BookAdapter.OnBoo
 
     @Override
     public boolean onCreateOptionsMenu(Menu menu) {
-        menu.add(0, 1, 0, "Update Data");
-        menu.add(0, 2, 1, "About Books App ");
+        menu.add(0, 1, 0, "Update Data")
+                .setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER);
+
+        menu.add(0, 2, 1, "About Books App")
+                .setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER);
         return true;
     }
 
     @Override
     public boolean onOptionsItemSelected(MenuItem item) {
         if (item.getItemId() == 1) {
+            Toast.makeText(this, "Updating...", Toast.LENGTH_SHORT).show();
             refreshData();
             return true;
-        }
-        else if (item.getItemId() == 2) {
+        } else if (item.getItemId() == 2) {
             showProjectIdeaDialog();
             return true;
         }
@@ -238,10 +256,9 @@ public class MainActivity extends AppCompatActivity implements BookAdapter.OnBoo
 
     private void showProjectIdeaDialog() {
         androidx.appcompat.app.AlertDialog.Builder builder = new androidx.appcompat.app.AlertDialog.Builder(this);
-        builder.setTitle("About Books App ");
-        builder.setMessage("Books App is a specialized digital library application designed specifically for programmers, developers, and computer science students.\n\n" +
-                "The app serves as a comprehensive hub for technical knowledge, allowing users to instantly search and access a vast collection of programming books, software engineering references, and tech magazines directly through the Google Books API.\n\n" +
-                "Whether you are looking for Android development guides, Java tutorials, or the latest tech trends, Books App provides a fast, clean, and organized platform to explore global programming resources and enhance your coding skills anytime, anywhere.");
+        builder.setTitle("About Books App");
+        builder.setMessage("Books App is a specialized digital library designed for programmers and tech enthusiasts.\n\n" +
+                "The app provides instant access to thousands of technical books via Google Books API, allowing you to search, view details, and stay updated with the latest in software development.");
         builder.setPositiveButton("Got it!", (dialog, which) -> dialog.dismiss());
         builder.show();
     }
